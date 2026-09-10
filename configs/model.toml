@@ -1,0 +1,58 @@
+# 神经网络模型配置
+
+# 模型架构
+[model]
+arch = "resnet_dqn"
+description = "ResNet 特征提取器 + Dueling DQN 决策网络 + GRP 奖励预测器"
+
+# 特征提取器配置
+[brain]
+input_channels = 132
+hidden_channels = 256
+num_residual_blocks = 12
+conv_kernel_size = 3
+conv_padding = 1
+final_channels = 256
+feature_dim = 1024
+activation = "mish"
+normalization = "batchnorm"
+eps = 1e-3
+
+# 注意力机制
+[attention]
+type = "channel"
+pool_types = ["avg", "max"]
+shared_mlp_layers = [256, 256]
+
+# Dueling DQN 配置
+[dueling]
+value_dim = 1
+advantage_dim = 6
+activation = "mish"
+
+# 决策头配置
+[heads]
+swap = { output_dim = 3, action_type = "discrete" }
+missing = { output_dim = 3, action_type = "discrete" }
+discard = { output_dim = 27, action_type = "discrete" }
+pong = { output_dim = 2, action_type = "discrete" }
+kong = { output_dim = 2, action_type = "discrete" }
+win = { output_dim = 2, action_type = "discrete" }
+
+# GRP 奖励预测器配置
+[grp]
+input_dim = 1024
+hidden_dim = 64
+num_layers = 2
+output_dim = 1
+dtype = "float64"
+description = "预测最终得分（底注单位）"
+
+# 探索配置
+[exploration]
+epsilon_start = 0.3
+epsilon_end = 0.05
+epsilon_decay_steps = 10000
+temperature_start = 1.0
+temperature_end = 0.1
+entropy_weight = 0.01

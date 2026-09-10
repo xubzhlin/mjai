@@ -1,0 +1,37 @@
+# 奖励配置
+
+# 即时奖励
+[immediate]
+# 杠结算权重
+kong_scoring_weight = 1.0
+# 胡牌权重
+win_weight = 1.0
+# 花猪惩罚
+huazhu_penalty = -1.0
+# 大叫惩罚
+dajiao_penalty = -1.0
+
+# 终局奖励
+[terminal]
+# 最终得分权重
+score_weight = 1.0
+# 排名权重
+rank_weight = 0.0  # 川麻为得分制，不需要排名奖励
+
+# GRP 辅助奖励
+[grp]
+weight = 0.1
+use_intermediate = true
+description = "每轮使用 GRP 预测的最终得分作为中间信号"
+
+# 奖励缩放
+[scaling]
+# 底注单位
+base_stake = 1
+# 奖励缩放因子
+scale_factor = 1.0
+
+# 探索奖励
+[exploration]
+entropy_bonus_weight = 0.01
+description = "策略熵正则化，鼓励多样化动作选择"

@@ -1,0 +1,19 @@
+[package]
+name = "mjai_engine"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "mjai_engine"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+rayon = "1.8"
+anyhow = "1.0"
+thiserror = "1.0"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+numpy = "0.23"

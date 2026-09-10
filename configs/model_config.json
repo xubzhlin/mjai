@@ -1,0 +1,64 @@
+{
+  "model_name": "mahjong_rl_model",
+  "version": "1.0.0",
+  "input_dim": 132,
+  "action_dim": 34,
+  "policy_hidden_dims": [512, 256, 128],
+  "value_hidden_dims": [256, 128],
+  "dropout_rate": 0.2,
+  "learning_rate": 0.001,
+  "batch_size": 32,
+  "epochs": 100,
+  "gamma": 0.99,
+  "epsilon": 0.1,
+  "epsilon_decay": 0.995,
+  "epsilon_min": 0.01,
+  "buffer_size": 10000,
+  "update_interval": 100,
+  "save_interval": 1000,
+  "model_dir": "e:/ai/mjai/models",
+  "log_dir": "e:/ai/mjai/logs",
+  "tensorboard_dir": "e:/ai/mjai/tensorboard",
+  "device": "auto",
+  "optimizer": "adam",
+  "loss_function": "mse",
+  "activation": "relu",
+  "weight_init": "xavier",
+  "regularization": "dropout",
+  "clip_grad_norm": 0.5,
+  "warmup_steps": 1000,
+  "max_grad_norm": 1.0,
+  "use_scheduler": true,
+  "scheduler_type": "cosine",
+  "scheduler_params": {
+    "T_max": 10000,
+    "eta_min": 1e-6
+  },
+  "early_stopping": {
+    "enabled": true,
+    "patience": 10,
+    "min_delta": 0.001
+  },
+  "checkpoint": {
+    "enabled": true,
+    "save_best_only": true,
+    "monitor": "val_loss",
+    "mode": "min"
+  },
+  "data_augmentation": {
+    "enabled": true,
+    "noise_std": 0.01,
+    "rotation": false,
+    "scaling": false
+  },
+  "ensemble": {
+    "enabled": false,
+    "num_models": 3,
+    "voting": "soft"
+  },
+  "evaluation": {
+    "num_games": 100,
+    "opponent": "random",
+    "metrics": ["win_rate", "avg_score", "action_entropy"]
+  }
+}

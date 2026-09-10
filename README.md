@@ -302,9 +302,9 @@ def test_game_creation():
 
 ## 📞 联系方式
 
-- 项目主页: https://github.com/your-username/mjai
-- 问题反馈: https://github.com/your-username/mjai/issues
-- 邮箱: your-email@example.com
+- 项目主页: https://github.com/xubzhlin/mjai
+- 问题反馈: https://github.com/xubzhlin/mjai/issues
+- 邮箱: 371889755@qq.com
 
 ---
 

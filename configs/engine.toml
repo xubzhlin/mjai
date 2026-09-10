@@ -1,0 +1,55 @@
+# 四川麻将引擎配置
+
+# 番型配置
+[fan]
+# 基础番型
+base_fans = [
+    { name = "ping_hu", value = 1, description = "平胡" },
+    { name = "dui_dui_hu", value = 2, description = "对对胡" },
+    { name = "qing_yi_se", value = 4, description = "清一色" },
+    { name = "qi_dui", value = 4, description = "七对" },
+    { name = "long_qi_dui", value = 8, description = "龙七对" },
+    { name = "jin_gou_diao", value = 4, description = "金钩钓" },
+]
+
+# 组合番型（基础番型相乘）
+combo_fans = [
+    { name = "qing_dui", components = ["qing_yi_se", "dui_dui_hu"], multiplier = 1 },
+    { name = "qing_qi_dui", components = ["qing_yi_se", "qi_dui"], multiplier = 1 },
+    { name = "qing_long_qi_dui", components = ["qing_yi_se", "long_qi_dui"], multiplier = 1 },
+]
+
+# 乘法修饰（叠加相乘）
+modifiers = [
+    { name = "gen", multiplier = 2, description = "根（构成龙七对的那组不重复计算）" },
+    { name = "kan_shang_hua", multiplier = 2, description = "杠上花" },
+    { name = "qiang_gang_hu", multiplier = 2, description = "抢杠胡" },
+]
+
+# 封顶配置
+[fan.cap]
+max_fan = 16
+description = "总番数超过 16 时按 16 计算"
+
+# 计分配置
+[scoring]
+base_score = 1
+self_draw_bonus = 1
+description = "自摸胡牌额外加 1 底（独立于番数，不受封顶限制）"
+
+# 杠结算配置
+[kong_scoring]
+dark_kong_multiplier = 2
+exposed_kong_multiplier = 1
+add_kong_multiplier = 1
+description = "暗杠 +2×未胡者数底、明杠 +2底、补杠 +1×未胡者数底"
+
+# 换三张配置
+[swap]
+dice_directions = ["下", "对", "上"]
+description = "掷骰子定向：下家、对家、上家"
+
+# 定缺配置
+[missing]
+tian_que_probability = 0.75
+description = "天缺：75%选空门、25%保留冲清一色"
