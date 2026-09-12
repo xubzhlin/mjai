@@ -80,3 +80,69 @@ fn parse_win_type(s: &str) -> WinType {
         _ => WinType::Tsumo,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::rules::{FanRule, FanResult, KongType};
+    use crate::algo::winning::WinType;
+
+    fn sc() -> ScoringCalculator { ScoringCalculator::new() }
+
+    // ===== Hu 计分 =====
+    #[test]
+    fn test_hu_formula_base() {
+        // base=1, fan=2, extra_bases=1, num_payers=3 → (1*2 + 1*1)*3 = 9
+        let result = FanResult { fan: 2, extra_bases: 1 };
+        let total = sc().calculate_hu(result, WinType::Tsumo, 1, 3);
+        assert_eq!(total, 9, "自摸 2 番 + 加底，3 家支付 = 9");
+    }
+
+    #[test]
+    fn test_hu_ron_single_payer() {
+        // base=1, fan=4, extra_bases=0, num_payers=1 → (1*4 + 0)*1 = 4
+        let result = FanResult { fan: 4, extra_bases: 0 };
+        let total = sc().calculate_hu(result, WinType::Ron, 1, 1);
+        assert_eq!(total, 4, "点炮 4 番，独付 = 4");
+    }
+
+    #[test]
+    fn test_hu_tsumo_extra_bases() {
+        // base=2, fan=16 (封顶), extra_bases=1, num_payers=2 → (2*16 + 2*1)*2 = 68
+        let result = FanResult { fan: 16, extra_bases: 1 };
+        let total = sc().calculate_hu(result, WinType::Tsumo, 2, 2);
+        assert_eq!(total, 68);
+    }
+
+    // ===== Kong 计分 =====
+    #[test]
+    fn test_kong_ankan() {
+        // 暗杠：2 × base × num_payers → 2*1*3 = 6
+        let total = sc().calculate_kong(KongType::AnKan, 1, 3);
+        assert_eq!(total, 6);
+    }
+
+    #[test]
+    fn test_kong_minkan() {
+        // 明杠：2 × base → 2*1 = 2（点杠者独付，不乘 num_payers）
+        let total = sc().calculate_kong(KongType::MinKan, 1, 3);
+        assert_eq!(total, 2);
+    }
+
+    #[test]
+    fn test_kong_bukan() {
+        // 补杠：1 × base × num_payers → 1*1*3 = 3
+        let total = sc().calculate_kong(KongType::BuKan, 1, 3);
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn test_kong_zero_sum_payers() {
+        // AnKan 零和验证：winner 收 = 所有 payer 付
+        let base = 1u32;
+        let n = 3usize;
+        let amount = sc().calculate_kong(KongType::AnKan, base, n);
+        let per_payer = 2 * (base as i32);
+        assert_eq!(amount, per_payer * (n as i32), "AnKan 总额 = 每家付 × 人数");
+    }
+}

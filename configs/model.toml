@@ -7,7 +7,7 @@ description = "ResNet 特征提取器 + Dueling DQN 决策网络 + GRP 奖励预
 
 # 特征提取器配置
 [brain]
-input_channels = 132
+input_channels = 71   # Phase 1 ObservationEncoder 输出 71 通道 (71×27 = 1917 维)
 hidden_channels = 256
 num_residual_blocks = 12
 conv_kernel_size = 3

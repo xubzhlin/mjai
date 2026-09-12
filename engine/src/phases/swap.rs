@@ -221,17 +221,37 @@ impl SwapProcessor {
         }
     }
 
-    /// 处理换三张
-    pub fn process_swap(hands: &mut [Hand], rule: &dyn SwapRule, dice: u8) -> SwapResult {
+    /// 处理换三张 — Python 可选传入每个玩家的换牌选择
+    /// python_selections: Some(per-player tile indices) 用 Python 选的；None 自动用 AI
+    pub fn process_swap(
+        hands: &mut [Hand],
+        rule: &dyn SwapRule,
+        dice: u8,
+        python_selections: Option<&[Option<Vec<usize>>]>,
+    ) -> SwapResult {
         let num_players = hands.len();
-        let mut selections = Vec::with_capacity(num_players);
+        let mut selections: Vec<Vec<Tile>> = Vec::with_capacity(num_players);
 
         // 确定换三张方向
         let direction = rule.determine_direction(dice);
 
         // 每个玩家选择要交换的牌
-        for hand in &*hands {
-            let selected = rule.select_swap_tiles(hand);
+        for (i, hand) in hands.iter().enumerate() {
+            let selected = if let Some(ps) = python_selections {
+                if let Some(tile_indices) = ps.get(i).cloned().flatten() {
+                    // Python 传入了 tile indices → 转成 Tile
+                    let tiles: Vec<Tile> = tile_indices
+                        .iter()
+                        .filter_map(|&idx| Tile::from_index(idx))
+                        .collect();
+                    tiles
+                } else {
+                    // Python 没传这个玩家 → 默认 AI
+                    rule.select_swap_tiles(hand)
+                }
+            } else {
+                rule.select_swap_tiles(hand)
+            };
             selections.push(selected);
         }
 
@@ -415,7 +435,7 @@ mod tests {
             Hand::from_tiles(&[Tile::P1, Tile::P1, Tile::P1, Tile::P2, Tile::P2, Tile::P2]),
         ];
 
-        let result = SwapProcessor::process_swap(&mut hands, &rule, 3);
+        let result = SwapProcessor::process_swap(&mut hands, &rule, 3, None);
 
         assert!(SwapProcessor::validate_swap_result(&hands, &result));
         assert_eq!(hands[0].len(), 6);

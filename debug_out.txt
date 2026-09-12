@@ -1,0 +1,7 @@
+﻿game#9: scores=[-42, 12, 16, 16] sum=2 won=0 huazhu=[true, true, true, true]
+game#11: scores=[-12, -14, 42, -14] sum=2 won=0 huazhu=[true, true, true, true]
+game#12: scores=[17, -39, 13, 13] sum=4 won=0 huazhu=[true, true, true, true]
+game#13: scores=[16, 12, 16, -42] sum=2 won=0 huazhu=[true, true, true, true]
+game#14: scores=[-20, -22, 10, 34] sum=2 won=0 huazhu=[true, true, true, true]
+game#17: scores=[-29, -27, 31, 27] sum=2 won=0 huazhu=[true, true, true, true]
+game#18: scores=[-25, 9, 6, 18] sum=8 won=1 huazhu=[true, true, false, true]

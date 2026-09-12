@@ -1,0 +1,7 @@
+# 第一次跑（或换新机器）
+cd e:\ai\mjai
+.\setup.ps1
+
+# 每次开发新终端
+.\.venv\Scripts\Activate.ps1
+python scripts\train_large_pool.py

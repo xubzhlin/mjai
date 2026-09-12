@@ -167,16 +167,22 @@ pub struct FanResult {           // fan.rs 输出：番数 + 额外底数
     pub extra_bases: u32,        // 不受封顶限制的额外底数（目前只有自摸加底=1）
 }
 
+/// 杠类型（用于杠结算）
+pub enum KongType { AnKan, MinKan, BuKan }
+/// 副露类型（rules 层轻量视图，用于根的统计）
+pub enum MeldKind { Pong, ExposedKong, ConcealedKong, AddKong }
+pub struct MeldView { pub tile: Tile, pub kind: MeldKind }
+
 pub trait RuleSet: Send + Sync {
-    fn name(&self) -> &'static str;                              // 规则集名称
-    fn fan(&self, hand: &Hand, win_type: WinType) -> FanResult;  // 番型计算（所有规则修饰）
+    fn name(&self) -> &'static str;                                          // 规则集名称
+    fn fan(&self, hand: &Hand, melds: &[MeldView], win_type: WinType) -> FanResult;  // 番型计算（含根的副露杠统计）
     fn score_hu(&self, result: FanResult, win_type: WinType, base: u32, num_payers: usize) -> i32;  // 胡牌得分
     fn score_kong(&self, kong_type: KongType, base: u32, num_payers: usize) -> i32;  // 杠结算
     fn swap_rule(&self) -> &dyn SwapRule;                        // 换三张规则
     fn missing_rule(&self) -> &dyn MissingRule;                  // 定缺规则
 }
 
-pub trait FanRule { fn calculate(&self, hand: &Hand, win_type: WinType) -> FanResult; }
+pub trait FanRule { fn calculate(&self, hand: &Hand, melds: &[MeldView], win_type: WinType) -> FanResult; }
 pub trait ScoringRule {
     fn calculate_hu(&self, result: FanResult, win_type: WinType, base: u32, num_payers: usize) -> i32;
     fn calculate_kong(&self, kong_type: KongType, base: u32, num_payers: usize) -> i32;

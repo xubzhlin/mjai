@@ -92,6 +92,79 @@ class OpponentPool:
             if s.model_id == model_id:
                 return s
         return None
+
+    # ===== 持久化 =====
+
+    def state_dict(self) -> Dict[str, Any]:
+        """序列化整个对手池（含所有快照的 model weights）"""
+        snapshots_state = []
+        for s in self.snapshots:
+            model_sd = s.model.state_dict() if hasattr(s.model, "state_dict") else None
+            snapshots_state.append({
+                "model_id": s.model_id,
+                "iteration": s.iteration,
+                "creation_time": s.creation_time,
+                "win_rates": s.win_rates,
+                "total_games": s.total_games,
+                "total_wins": s.total_wins,
+                "model_state_dict": model_sd,
+            })
+        return {
+            "config": {
+                "max_size": self.config.max_size,
+                "admission_win_rate": self.config.admission_win_rate,
+                "retire_win_rate": self.config.retire_win_rate,
+                "snapshot_interval": self.config.snapshot_interval,
+                "sample_strategy": self.config.sample_strategy,
+                "enable_lfsp": self.config.enable_lfsp,
+            },
+            "snapshots": snapshots_state,
+            "_next_id_counter": self._next_id_counter,
+        }
+
+    def load_state_dict(self, state: Dict[str, Any], model_factory: Optional[Any] = None) -> None:
+        """从 state_dict 恢复对手池
+
+        Args:
+            state: 由 state_dict() 生成的字典
+            model_factory: 可选 callable，接受 (model_id) 返回一个空模型实例。
+                           若 None 则快照中的 model 保持 None（仅元数据恢复）。
+        """
+        # 恢复 config
+        cfg = state.get("config", {})
+        for k, v in cfg.items():
+            if hasattr(self.config, k):
+                setattr(self.config, k, v)
+
+        # 恢复快照
+        self.snapshots = []
+        for s_state in state.get("snapshots", []):
+            snap = ModelSnapshot(
+                model=None,  # 先占位
+                model_id=s_state["model_id"],
+                iteration=s_state["iteration"],
+                creation_time=s_state.get("creation_time", 0.0),
+                win_rates=s_state.get("win_rates", {}),
+                total_games=s_state.get("total_games", 0),
+                total_wins=s_state.get("total_wins", 0),
+            )
+            # 恢复 model weights
+            model_sd = s_state.get("model_state_dict")
+            if model_sd is not None:
+                if model_factory is not None:
+                    try:
+                        snap.model = model_factory(s_state["model_id"])
+                        snap.model.load_state_dict(model_sd)
+                    except Exception as e:
+                        print(f"[OpponentPool] 恢复快照 {s_state['model_id']} 失败: {e}")
+                        snap.model = None
+                else:
+                    # 没有 factory → 只存 state_dict，等使用时再重建
+                    snap.model = model_sd  # 类型不规范，但保留了权重
+            self.snapshots.append(snap)
+
+        self._next_id_counter = state.get("_next_id_counter", len(self.snapshots))
+        print(f"[OpponentPool] 恢复完成: {len(self.snapshots)} 个快照")
     
     # ===== 添加/移除 =====
     

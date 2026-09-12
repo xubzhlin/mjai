@@ -136,13 +136,25 @@ pub struct MissingProcessor;
 
 impl MissingProcessor {
     /// 处理定缺
-    pub fn process_missing(hands: &mut [Hand], rule: &dyn MissingRule) -> MissingResult {
+    pub fn process_missing(
+        hands: &mut [Hand],
+        rule: &dyn MissingRule,
+        python_selections: Option<&[Option<usize>]>,
+    ) -> MissingResult {
         let num_players = hands.len();
-        let mut selections = Vec::with_capacity(num_players);
+        let mut selections: Vec<Option<Suit>> = Vec::with_capacity(num_players);
 
         // 每个玩家选择缺门
-        for hand in &*hands {
-            let selected = Some(rule.select_missing_suit(hand));
+        for (i, hand) in hands.iter().enumerate() {
+            let selected = if let Some(ps) = python_selections {
+                if let Some(suit_idx) = ps.get(i).copied().flatten() {
+                    Suit::from_index(suit_idx)
+                } else {
+                    Some(rule.select_missing_suit(hand))
+                }
+            } else {
+                Some(rule.select_missing_suit(hand))
+            };
             selections.push(selected);
         }
 
@@ -324,7 +336,7 @@ mod tests {
             Hand::from_tiles(&[Tile::P1, Tile::P1, Tile::P1, Tile::P2, Tile::P2]),
         ];
 
-        let result = MissingProcessor::process_missing(&mut hands, &rule);
+        let result = MissingProcessor::process_missing(&mut hands, &rule, None);
 
         assert!(MissingProcessor::validate_missing_result(&hands, &result));
         assert_eq!(result.player_selections.len(), 2);

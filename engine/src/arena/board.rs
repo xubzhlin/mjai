@@ -1,6 +1,7 @@
 ﻿use crate::tile::{Tile, Hand};
 use crate::state::PlayerState;
 use crate::rules::SwapDirection;
+use pyo3::prelude::*;
 use rand::prelude::SliceRandom;
 use rand::Rng;
 use std::collections::VecDeque;
@@ -54,6 +55,7 @@ impl Wall {
 
 /// 牌桌状态
 #[derive(Debug, Clone)]
+#[pyclass]
 pub struct Board {
     /// 玩家状态
     pub players: Vec<PlayerState>,
@@ -248,6 +250,49 @@ impl Board {
             .filter(|(_, p)| !p.has_won)
             .map(|(i, _)| i)
             .collect()
+    }
+}
+
+#[pymethods]
+impl Board {
+    #[pyo3(name = "current_player")]
+    fn py_current_player(&self) -> usize {
+        self.current_player
+    }
+
+    #[pyo3(name = "kan_shang_active")]
+    fn py_kan_shang_active(&self) -> bool {
+        self.kan_shang_active
+    }
+
+    #[pyo3(name = "wall_remaining")]
+    fn py_wall_remaining(&self) -> usize {
+        self.wall.remaining_count()
+    }
+
+    #[pyo3(name = "num_players")]
+    fn py_num_players(&self) -> usize {
+        self.players.len()
+    }
+
+    #[pyo3(name = "player_score")]
+    fn py_player_score(&self, pid: usize) -> i32 {
+        self.players.get(pid).map(|p| p.score).unwrap_or(0)
+    }
+
+    #[pyo3(name = "player_has_won")]
+    fn py_player_has_won(&self, pid: usize) -> bool {
+        self.players.get(pid).map(|p| p.has_won).unwrap_or(false)
+    }
+
+    #[pyo3(name = "game_summary")]
+    fn py_game_summary(&self) -> String {
+        // 简单 JSON-like 摘要字符串，便于 Python 打印
+        let scores: Vec<String> = self.players.iter()
+            .map(|p| format!("{}:+{}", p.id, p.score))
+            .collect();
+        format!("GameOver wall_remaining={} players=[{}]",
+            self.wall.remaining_count(), scores.join(", "))
     }
 }
 

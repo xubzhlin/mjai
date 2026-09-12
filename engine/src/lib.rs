@@ -42,6 +42,19 @@ fn register_placeholder_submodule<'py>(
     PyModule::new_bound(py, name)
 }
 
+fn register_arena_submodule<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyModule>> {
+    let sub = PyModule::new_bound(py, "arena")?;
+    sub.add_class::<crate::arena::board::Board>()?;
+    sub.add_class::<crate::arena::game::Game>()?;
+    Ok(sub)
+}
+
+fn register_observation_submodule<'py>(py: Python<'py>) -> PyResult<Bound<'py, PyModule>> {
+    let sub = PyModule::new_bound(py, "observation")?;
+    sub.add_class::<crate::observation::encoder::ObservationEncoder>()?;
+    Ok(sub)
+}
+
 /// 主入口：#[pymodule] mjai_engine
 #[pymodule]
 fn mjai_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -52,8 +65,8 @@ fn mjai_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let sub_tile = register_placeholder_submodule(py, "tile")?;
     let sub_algo = register_placeholder_submodule(py, "algo")?;
     let sub_state = register_placeholder_submodule(py, "state")?;
-    let sub_arena = register_placeholder_submodule(py, "arena")?;
-    let sub_observation = register_placeholder_submodule(py, "observation")?;
+    let sub_arena = register_arena_submodule(py)?;
+    let sub_observation = register_observation_submodule(py)?;
 
     m.add_submodule(&sub_rules)?;
     m.add_submodule(&sub_tile)?;
@@ -66,6 +79,9 @@ fn mjai_engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<crate::rules::fan::FanCalculator>()?;
     m.add_class::<crate::rules::scoring::ScoringCalculator>()?;
     m.add_class::<crate::rules::presets::xue_zhan::XueZhanRuleSet>()?;
+    m.add_class::<crate::arena::board::Board>()?;
+    m.add_class::<crate::arena::game::Game>()?;
+    m.add_class::<crate::observation::encoder::ObservationEncoder>()?;
 
     // 用 sys.modules 注册，支持 `from mjai_engine.rules import XueZhanRuleSet`
     let sys = py.import("sys")?;

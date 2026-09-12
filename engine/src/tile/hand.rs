@@ -68,6 +68,14 @@ impl Hand {
             false
         }
     }
+
+    /// 移除 n 张指定牌（用于杠时批量移除手牌）
+    pub fn remove_n_tiles(&mut self, tile: Tile, n: u8) -> u8 {
+        let idx = tile.to_index();
+        let removed = n.min(self.tiles[idx]);
+        self.tiles[idx] -= removed;
+        removed
+    }
     
     /// 获取指定牌的数量
     pub fn count(&self, tile: Tile) -> u8 {

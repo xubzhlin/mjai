@@ -55,6 +55,7 @@ use crate::tile::{Tile, Suit, Hand};
 use crate::state::{PlayerState, MeldType};
 use crate::arena::Board;
 use crate::rules::SwapDirection;
+use pyo3::prelude::*;
 
 /// 总通道数 = 55 (v2) + 4 (清缺进度) + 12 (最近 3 张弃牌时序)
 const NUM_CHANNELS: usize = 71;
@@ -69,6 +70,7 @@ const RECENT_DISCARD_WINDOW: usize = 3;
 
 /// 默认观测编码器
 #[derive(Debug)]
+#[pyclass]
 pub struct ObservationEncoder {
     feature_count: usize,
 }
@@ -360,9 +362,7 @@ impl ObservationEncoder {
     /// 估算玩家**起手**时的缺门牌总数
     ///
     /// 川麻将牌时序自包含推断：
-    /// ```
     /// 初始缺门牌数 = 手牌中剩余缺门牌数 + 已弃出的缺门牌数
-    /// ```
     /// 如果玩家已定缺但当前手牌中完全没有缺门牌，且弃牌河中也没有缺门牌 → 可能是天缺。
     fn initial_missing_count(&self, p: &PlayerState, suit: Suit) -> u8 {
         let in_hand: u8 = Tile::all()
@@ -398,6 +398,31 @@ impl ObservationEncoder {
             .count() as u8;
 
         (discarded_missing as f32 / initial as f32).min(1.0)
+    }
+}
+
+#[pymethods]
+impl ObservationEncoder {
+    #[new]
+    fn py_new() -> Self {
+        Self::new()
+    }
+
+    #[pyo3(name = "encode")]
+    fn py_encode(&self, board: &Board, player_id: usize) -> Vec<f32> {
+        Self::encode(self, board, player_id)
+    }
+}
+
+impl crate::observation::ObservationEncoderTrait for ObservationEncoder {
+    fn encode(&self, board: &Board, player_id: usize) -> Vec<f32> {
+        ObservationEncoder::encode(self, board, player_id)
+    }
+    fn feature_count(&self) -> usize {
+        self.feature_count
+    }
+    fn num_channels(&self) -> usize {
+        NUM_CHANNELS
     }
 }
 

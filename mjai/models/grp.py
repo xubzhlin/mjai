@@ -1,4 +1,4 @@
-"""
+﻿"""
 GRP (Game Result Predictor) 奖励预测器
 基于 GRU 网络架构，预测川麻将血战到底的最终得分
 """
@@ -15,7 +15,7 @@ from dataclasses import dataclass
 @dataclass
 class GRPConfig:
     """GRP 配置类"""
-    input_dim: int = 132  # 输入特征维度
+    input_dim: int = 1024  # Brain 输出特征维度
     hidden_dim: int = 64  # GRU 隐藏层维度
     num_layers: int = 2   # GRU 层数
     dropout_rate: float = 0.1  # Dropout 率
@@ -76,17 +76,21 @@ class GRP(nn.Module):
         self._initialize_weights()
     
     def _initialize_weights(self):
-        """初始化网络权重"""
+        """
+        权重初始化策略（按参数形态分层）：
+          - nn.Linear.weight / nn.GRU.weight_ih/_hh → xavier_uniform_（ndim≥2）
+          - 1D 参数（BatchNorm.weight/bias, GRU bias）→ 跳过，使用 PyTorch 默认值
+            BN.weight 默认 1.0 / bias 默认 0.0 是训练稳定起点
+            GRU bias 默认 0.0
+        """
         for name, param in self.named_parameters():
-            if 'weight' in name:
-                if 'gru' in name:
-                    # GRU 权重初始化
-                    nn.init.xavier_uniform_(param)
-                else:
-                    # 全连接层权重初始化
-                    nn.init.xavier_uniform_(param)
+            if 'weight' in name and param.ndim >= 2:
+                # Linear.weight / GRU.weight_ih_l* / GRU.weight_hh_l*
+                nn.init.xavier_uniform_(param)
             elif 'bias' in name:
+                # 所有 bias（Linear/GRU/BN）置 0
                 nn.init.constant_(param, 0)
+            # 1D weight（BN.weight）跳过 → 保留 PyTorch 默认 init (BN=1.0)
     
     def forward(self, x: torch.Tensor, hidden: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -421,7 +425,7 @@ def test_grp():
     
     # 创建配置
     config = GRPConfig(
-        input_dim=132,
+        input_dim=1024,
         hidden_dim=64,
         num_layers=2,
         dropout_rate=0.1,

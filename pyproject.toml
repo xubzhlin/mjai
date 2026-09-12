@@ -1,4 +1,8 @@
 [project]
+name = "mjai"
+version = "0.1.0"
+description = "Sichuan Mahjong Self-Play RL (XueZhanDaoDi)"
+requires-python = ">=3.10"
 dependencies = [
     "torch>=2.0",
     "numpy>=1.24",
@@ -8,8 +12,11 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
-build-backend = "maturin"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["mjai*"]
 
 [project.scripts]
 mjai-train = "mjai.train:main"

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Brain 特征提取器
 基于 ResNet 架构，包含残差块和通道注意力机制
 
@@ -130,7 +130,7 @@ class Brain(nn.Module):
     
     def __init__(
         self,
-        input_channels: int = 132,    # 输入通道数（观测特征维度）
+        input_channels: int = 71,     # Phase 1 ObservationEncoder 输出 71 通道（观测特征维度）
         hidden_channels: int = 256,   # 隐藏通道数
         num_residual_blocks: int = 12, # 残差块数量
         seq_length: int = 27,          # 序列长度（牌种类）
@@ -261,7 +261,7 @@ if __name__ == "__main__":
     print("测试 Brain 特征提取器...")
     
     brain = Brain(
-        input_channels=132,
+        input_channels=71,
         hidden_channels=256,
         num_residual_blocks=12,
         seq_length=27,
@@ -272,14 +272,14 @@ if __name__ == "__main__":
     
     # 测试输入
     batch_size = 4
-    x = torch.randn(batch_size, 132, 27)
+    x = torch.randn(batch_size, 71, 27)
     output = brain(x)
     print(f"输入形状: {x.shape}")
     print(f"输出形状: {output.shape}")
     assert output.shape == (batch_size, 1024), f"输出维度错误: {output.shape}"
     
     # 测试展平输入
-    x_flat = torch.randn(batch_size, 132 * 27)
+    x_flat = torch.randn(batch_size, 71 * 27)
     output_flat = brain(x_flat)
     print(f"展平输入形状: {x_flat.shape}")
     print(f"展平输出形状: {output_flat.shape}")

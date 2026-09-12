@@ -130,10 +130,10 @@ impl PlayerState {
     }
     
     /// 设置已胡牌
-    pub fn set_won(&mut self, fan: u32, score: i32) {
+    pub fn set_won(&mut self, fan: u32, _score: i32) {
         self.has_won = true;
         self.fan = fan;
-        self.score = score;
+        // score 由 arena/game.rs 的 settle_win/settle_kong 负责（+=/ -= 保证零和）
     }
     
     /// 设置花猪
@@ -345,11 +345,10 @@ mod tests {
     #[test]
     fn test_player_win() {
         let mut player = PlayerState::new(0);
-        
-        player.set_won(4, 16);
+
+        player.set_won(4, 16);  // 第二参数 score 已废弃，由 arena 结算层管理
         assert!(player.has_won);
         assert_eq!(player.fan, 4);
-        assert_eq!(player.score, 16);
     }
     
     #[test]

@@ -1,4 +1,4 @@
-"""
+﻿"""
 ResNetDQN 完整模型 + ModelFactory 工厂
 
 ResNetDQN: Brain(ResNet 特征提取) + 6 个 Dueling DQN 决策头
@@ -28,7 +28,7 @@ class ModelConfig:
     arch: str = "resnet_dqn"
     
     # Brain 配置
-    input_channels: int = 132
+    input_channels: int = 71   # Phase 1 ObservationEncoder 输出 71 通道
     hidden_channels: int = 256
     num_residual_blocks: int = 12
     seq_length: int = 27

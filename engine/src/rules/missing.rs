@@ -84,12 +84,13 @@ impl MissingRuleCalculator {
             // 两个花色：75%选空门，25%保留冲清一色
             let mut rng = rand::thread_rng();
             if rng.gen::<f64>() < self.tian_que_threshold {
-                // 选空门（不在天缺花色中的花色）
-                let missing_suit = match tian_que_suits {
-                    (Suit::Man, Suit::Pin) => Suit::Sou,
-                    (Suit::Man, Suit::Sou) => Suit::Pin,
-                    (Suit::Pin, Suit::Sou) => Suit::Man,
-                    _ => unreachable!(),
+                // 选空门（不在天缺两种花色中的那种）
+                let missing_suit = if tian_que_suits.0 != Suit::Man && tian_que_suits.1 != Suit::Man {
+                    Suit::Man
+                } else if tian_que_suits.0 != Suit::Pin && tian_que_suits.1 != Suit::Pin {
+                    Suit::Pin
+                } else {
+                    Suit::Sou
                 };
                 return Ok(missing_suit);
             } else {

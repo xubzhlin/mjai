@@ -12,12 +12,10 @@ mjai.bots — 基线 AI 系统
 
 from .base import BotBase
 from .random_bot import RandomBot
-from .heuristic_bot import HeuristicBot, GreedyHeuristicBot, ConservativeHeuristicBot
+from .heuristic_bot import HeuristicBot
 
 __all__ = [
     'BotBase',
     'RandomBot',
     'HeuristicBot',
-    'GreedyHeuristicBot',
-    'ConservativeHeuristicBot',
 ]

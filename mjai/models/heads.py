@@ -24,9 +24,9 @@ from .brain import Mish
 
 
 class SwapHead(DuelingQHead):
-    """换三张决策头：选哪门花色（万/筒/条 = 0/1/2）"""
+    """换三张决策头：选哪张 tile (0-26)，Python 再从该花色抽 3 张"""
     
-    NUM_ACTIONS = 3
+    NUM_ACTIONS = 27
     
     def __init__(self, feature_dim: int = 1024, hidden_dim: int = 256):
         super().__init__(feature_dim, SwapHead.NUM_ACTIONS, hidden_dim)
