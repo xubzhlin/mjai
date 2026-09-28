@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-09-27T18:17:05.041746",
+  "total_tests": 29,
+  "failures": 2,
+  "errors": 14,
+  "skipped": 0,
+  "success_rate": 44.827586206896555,
+  "execution_time": 10.131269693374634,
+  "failures_details": [
+    [
+      

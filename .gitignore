@@ -4,3 +4,6 @@
 **/tests/
 .venv/
 replays/
+training_output/
+checkpoints_opppool5000/
+
