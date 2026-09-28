@@ -53,11 +53,13 @@ class OpponentPoolConfig:
     admission_win_rate: float = 0.30  # 准入门槛：30%
     retire_win_rate: float = 0.10     # 强制淘汰门槛：10%
     snapshot_interval: int = 500      # 每隔多少局生成候选快照
-    eval_games: int = 100             # 评估对局数
+    eval_games: int = 100             # 评估对局数（每个对手）
     sample_strategy: str = "uniform"  # 采样策略：uniform / adversarial
     # LFSP 配置
     enable_lfsp: bool = False         # 是否启用 LFSP
     main_exploiter_interval: int = 2000  # Main Exploiter 更新间隔
+    # 可选：真实对局评估器 (candidate_model, existing_models_list, n_games) -> Dict[model_id, win_rate]
+    admission_evaluator: Optional[Any] = None
 
 
 class OpponentPool:
@@ -190,50 +192,35 @@ class OpponentPool:
             self._next_id_counter += 1
             model_id = f"snap_{iteration:06d}_{self._next_id_counter:04d}"
         
-        # 如果池为空，首个快照直接入池
-        if self.is_empty():
-            snapshot = ModelSnapshot(
-                model=copy.deepcopy(model),
-                model_id=model_id,
-                iteration=iteration,
-                creation_time=time.time(),
-            )
-            self.snapshots.append(snapshot)
-            print(f"[OpponentPool] 首个快照入池: {model_id} (迭代 {iteration})")
-            return True, model_id
-        
-        # 准入评估：与池中所有对手进行 eval_games 局
-        if len(self.snapshots) > 0:
-            candidate = ModelSnapshot(
-                model=copy.deepcopy(model),
-                model_id=model_id,
-                iteration=iteration,
-                creation_time=time.time(),
-            )
-            
-            # 计算准入胜率
-            avg_win_rate = self._evaluate_admission(candidate)
-            candidate.win_rates = {s.model_id: 0.0 for s in self.snapshots}
-            
-            print(f"[OpponentPool] 候选快照 {model_id} 准入胜率: {avg_win_rate:.2%}")
-            
-            if avg_win_rate < self.config.admission_win_rate:
-                print(f"[OpponentPool] ❌ 准入失败（{avg_win_rate:.2%} < {self.config.admission_win_rate:.0%}）")
-                return False, model_id
-        
-        # 容量满了 → 淘汰最旧或最弱
-        if len(self.snapshots) >= self.config.max_size:
-            self._evict()
-        
-        # 入池
+        # 构建候选快照（只用一个对象，评估结果直接写在这里）
         snapshot = ModelSnapshot(
             model=copy.deepcopy(model),
             model_id=model_id,
             iteration=iteration,
             creation_time=time.time(),
         )
-        self.snapshots.append(snapshot)
         
+        # 如果池为空，首个快照直接入池（免评估）
+        if self.is_empty():
+            self.snapshots.append(snapshot)
+            print(f"[OpponentPool] 首个快照入池: {model_id} (迭代 {iteration})")
+            return True, model_id
+        
+        # 准入评估（真实对局 or 启发式 fallback）
+        avg_win_rate = self._evaluate_admission(snapshot)
+        
+        print(f"[OpponentPool] 候选快照 {model_id} 准入胜率: {avg_win_rate:.2%}  "
+              f"(vs {len(self.snapshots)} 个已有快照)")
+        
+        if avg_win_rate < self.config.admission_win_rate:
+            print(f"[OpponentPool] ❌ 准入失败（{avg_win_rate:.2%} < {self.config.admission_win_rate:.0%}）")
+            return False, model_id
+        
+        # 容量满了 → 淘汰
+        if len(self.snapshots) >= self.config.max_size:
+            self._evict()
+        
+        self.snapshots.append(snapshot)
         print(f"[OpponentPool] ✅ 快照入池: {model_id} (迭代 {iteration}, 当前池大小 {len(self.snapshots)}/{self.config.max_size})")
         return True, model_id
     
@@ -250,30 +237,55 @@ class OpponentPool:
         self.snapshots.clear()
         print("[OpponentPool] 池已清空")
     
-    # ===== 准入评估（模拟）=====
+    # ===== 准入评估 =====
     
     def _evaluate_admission(self, candidate: ModelSnapshot) -> float:
         """
         评估候选快照的准入胜率
         
-        注意：这里使用启发式估计，实际应通过模拟自博弈实现。
-        真实实现需要调用引擎进行 eval_games 局对局。
+        优先使用 config.admission_evaluator (真实对局)，
+        未注入时 fallback 到 sigmoid 启发式。
+        
+        admission_evaluator 签名:
+            (candidate_model, [(model_id, model), ...], n_games) -> Dict[model_id, win_rate]
         """
         if len(self.snapshots) == 0:
             return 0.5  # 无对手时默认 50%
         
-        # 启发式：假设越新的模型越强
-        # 实际实现：需要通过引擎运行 eval_games 局对局
+        # 优先：真实对局评估
+        evaluator = self.config.admission_evaluator
+        if evaluator is not None:
+            try:
+                existing_pairs = [(s.model_id, s.model) for s in self.snapshots if s.model is not None]
+                if existing_pairs:
+                    results = evaluator(candidate.model, existing_pairs, self.config.eval_games)
+                    # results: Dict[model_id, win_rate] — key 必须匹配 existing 的 model_id
+                    candidate.win_rates = {}
+                    total_games = 0
+                    total_wins = 0
+                    n_per = max(1, self.config.eval_games // max(1, len(existing_pairs)))
+                    for s in self.snapshots:
+                        wr = results.get(s.model_id, 0.0)
+                        candidate.win_rates[s.model_id] = wr
+                        total_games += n_per
+                        total_wins += int(wr * n_per)
+                    candidate.total_games = total_games
+                    candidate.total_wins = total_wins
+                    avg = sum(candidate.win_rates.values()) / max(1, len(candidate.win_rates))
+                    return avg
+            except Exception as e:
+                print(f"[OpponentPool] admission_evaluator 异常，fallback 启发式: {e}")
+        
+        # Fallback：启发式估计
         win_rates = []
         for existing in self.snapshots:
-            # 启发式估计：候选比老模型胜率更高
             iteration_diff = candidate.iteration - existing.iteration
-            # 简单 sigmoid 估计
             estimated_wr = 1.0 / (1.0 + np.exp(-iteration_diff / 10.0))
             win_rates.append(estimated_wr)
             candidate.win_rates[existing.model_id] = estimated_wr
-        
-        return np.mean(win_rates)
+        candidate.total_games = 0
+        candidate.total_wins = 0
+        return float(np.mean(win_rates))
     
     # ===== 淘汰 =====
     
@@ -282,12 +294,15 @@ class OpponentPool:
         if not self.snapshots:
             return
         
-        # 第一优先级：胜率 < retire_win_rate 的快照直接淘汰
-        for s in self.snapshots[:]:
-            if len(s.win_rates) > 0 and s.avg_win_rate < self.config.retire_win_rate:
-                print(f"[OpponentPool] 强制淘汰 {s.model_id}（胜率 {s.avg_win_rate:.2%} < {self.config.retire_win_rate:.0%}）")
-                self.snapshots.remove(s)
-                return
+        # 第一优先级：真实对局胜率 < retire_win_rate 的快照强制淘汰
+        evict_candidates = [s for s in self.snapshots 
+                           if s.total_games > 0 and s.avg_win_rate < self.config.retire_win_rate]
+        if evict_candidates:
+            weakest = min(evict_candidates, key=lambda s: s.avg_win_rate)
+            print(f"[OpponentPool] 强制淘汰 {weakest.model_id} "
+                  f"(胜率 {weakest.avg_win_rate:.2%} < {self.config.retire_win_rate:.0%})")
+            self.snapshots.remove(weakest)
+            return
         
         # 第二优先级：淘汰最旧的快照
         oldest = min(self.snapshots, key=lambda s: s.creation_time)

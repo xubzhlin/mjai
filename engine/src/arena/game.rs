@@ -1,4 +1,4 @@
-﻿use crate::tile::{Tile, Suit, Hand};
+use crate::tile::{Tile, Suit, Hand};
 use crate::state::{PlayerState, Action, MeldType, Meld, ActionValidator};
 use crate::arena::Board;
 use crate::phases::{Dealer, SwapProcessor, MissingProcessor};
@@ -281,6 +281,37 @@ impl Game {
         });
     }
 
+    /// 川麻胡牌前置检查：缺门清干净 && 纯牌型可胡
+    /// Tsumo/KanShang 用（手牌应已 14 张）
+    fn can_win_tsumo(&self, player_id: usize) -> bool {
+        let player = &self.board.players[player_id];
+        let hand = &player.hand;
+        // 1. 缺门必须清干净
+        if let Some(s) = hand.missing_suit {
+            if hand.count_by_suit(s) > 0 { return false; }
+        }
+        // 2. 手牌过滤缺门 → 传入 WinChecker，告诉它已有的副露面子数
+        let existing_melds = player.melds.len();
+        let filtered = hand.hand_without_missing();
+        WinChecker::can_win_with_melds(&filtered, crate::algo::winning::WinType::Tsumo, existing_melds)
+    }
+
+    /// 川麻点炮胡检查：缺门清干净 && 临时加弃牌后纯牌型可胡
+    fn can_win_ron(&self, player_id: usize, discard_tile: Tile) -> bool {
+        let player = &self.board.players[player_id];
+        let hand = &player.hand;
+        // 1. 缺门必须清干净
+        if let Some(s) = hand.missing_suit {
+            if hand.count_by_suit(s) > 0 { return false; }
+        }
+        // 2. 手牌加弃牌，过滤缺门 → 传入 WinChecker，告诉它已有的副露面子数
+        let existing_melds = player.melds.len();
+        let mut temp = hand.copy();
+        temp.add_tile(discard_tile);
+        let filtered = temp.hand_without_missing();
+        WinChecker::can_win_with_melds(&filtered, crate::algo::winning::WinType::Ron, existing_melds)
+    }
+
     pub fn process_turn(&mut self) -> bool {
         if self.phase != GamePhase::Playing || self.board.is_game_over() {
             return false;
@@ -310,12 +341,9 @@ impl Game {
             tile: drawn_tile,
         });
 
-        // 2. 杠上花检测（刚杠完摸的牌）
+        // 2. 杠上花检测（刚杠完摸的牌）— 同自摸逻辑
         if self.board.kan_shang_active {
-            let can_win_kanshang = WinChecker::can_win(
-                &self.board.players[current_player].hand,
-                crate::algo::winning::WinType::KanShang,
-            );
+            let can_win_kanshang = self.can_win_tsumo(current_player);
             if can_win_kanshang {
                 let payers = self.unwon_players_excluding(Some(current_player));
                 self.settle_win(current_player, crate::algo::winning::WinType::KanShang, self.base_score, &payers);
@@ -327,11 +355,7 @@ impl Game {
         }
 
         // 3. 自摸检测
-        let can_tsumo = WinChecker::can_win(
-            &self.board.players[current_player].hand,
-            crate::algo::winning::WinType::Tsumo,
-        );
-        if can_tsumo {
+        if self.can_win_tsumo(current_player) {
             let payers = self.unwon_players_excluding(Some(current_player));
             self.settle_win(current_player, crate::algo::winning::WinType::Tsumo, self.base_score, &payers);
             self.check_and_finalize();
@@ -434,12 +458,11 @@ impl Game {
 
         for player in 0..self.board.players.len() {
             if player == discarder || self.board.players[player].has_won { continue; }
-            let p = &self.board.players[player];
-            if WinChecker::can_win(&p.hand, crate::algo::winning::WinType::Ron) {
+            if self.can_win_ron(player, tile) {
                 ron_winners.push(player);
-            } else if p.can_kong(tile) {
+            } else if self.board.players[player].can_kong(tile) {
                 kong_responders.push(player);
-            } else if p.can_pong(tile) {
+            } else if self.board.players[player].can_pong(tile) {
                 pong_responders.push(player);
             }
         }
@@ -466,9 +489,9 @@ impl Game {
         let discarder = pending.discarder;
 
         if !pending.ron_winners.is_empty() {
-            // 一炮多响
+            // 一炮多响 — Ron 赢家手牌只有 13 张，弃牌不在赢家手里（已在 discarder 弃牌时移除）
+            // 所以**不需要** remove_tile，直接结算
             for winner in &pending.ron_winners {
-                self.board.players[*winner].remove_tile(tile);
                 self.settle_win(*winner, crate::algo::winning::WinType::Ron, self.base_score, &[discarder]);
             }
         } else if !pending.kong_responders.is_empty() {
@@ -481,7 +504,8 @@ impl Game {
             }
         } else if !pending.pong_responders.is_empty() {
             let responder = pending.pong_responders[0];
-            self.board.players[responder].remove_tile(tile);
+            // Pong：手里有 2 张 + 弃牌 1 张 = 3 张副露。手里需要减 2 张
+            self.board.players[responder].hand.remove_n_tiles(tile, 2);
             self.board.add_meld(MeldType::Pong, tile, Some(discarder));
         }
     }
@@ -497,9 +521,9 @@ impl Game {
         match action_type {
             "win" => {
                 if pending.ron_winners.contains(&responder) {
-                    self.board.players[responder].remove_tile(tile);
+                    // Ron 胡 — tile 是 discarder 弃出来的，不在 responder 手里，不需要 remove
                     self.settle_win(responder, crate::algo::winning::WinType::Ron, self.base_score, &[discarder]);
-                    self.pending_passive = None;  // 胡后清掉（胡最高优先级）
+                    self.pending_passive = None;
                     return true;
                 }
             },
@@ -520,7 +544,7 @@ impl Game {
             },
             "pong" => {
                 if pending.pong_responders.contains(&responder) {
-                    self.board.players[responder].remove_tile(tile);
+                    self.board.players[responder].hand.remove_n_tiles(tile, 2);
                     self.board.add_meld(MeldType::Pong, tile, Some(discarder));
                     // 清掉 pong 候选（胡/杠不会发生了）
                     let p = self.pending_passive.as_mut().unwrap();
@@ -629,26 +653,58 @@ impl Game {
 
     fn ai_select_action(&self, player_id: usize) -> Action {
         let ps = &self.board.players[player_id];
+        let base_shanten = ps.hand.shanten();
 
-        // 优先：用 ActionValidator 生成全部合法动作，过滤掉被动响应（Pong/Pass/Win/QiangGang），只取本家主动动作
-        let candidate = ActionValidator::generate_legal_actions(ps, self.current_turn);
-        let active_actions: Vec<&Action> = candidate.actions.iter()
-            .filter(|a| matches!(a.action_type,
-                crate::state::ActionType::Discard
-              | crate::state::ActionType::Kong))
-            .collect();
-
-        if let Some(a) = active_actions.into_iter().max_by_key(|a| a.priority) {
-            return a.clone();
+        // 1. 杠：保守策略——只在杠后 shanten 不升时杠
+        for tile in Tile::all().into_iter() {
+            if ps.hand.count(tile) >= 4 {
+                let mut h = ps.hand.copy();
+                h.remove_n_tiles(tile, 4);
+                let new_s = h.shanten();
+                if new_s <= base_shanten {
+                    return Action::kong(tile, None, self.current_turn);
+                }
+            }
         }
 
-        // 兜底：随便打一张
-        for tile in Tile::all() {
-            if ps.hand.contains(tile) {
+        // 2. 弃牌：两阶段策略
+        let discard_tiles: Vec<Tile> = Tile::all().into_iter()
+            .filter(|t| ps.hand.contains(*t))
+            .collect();
+
+        if discard_tiles.is_empty() {
+            return Action::pass(self.current_turn);
+        }
+
+        let missing_suit = ps.hand.missing_suit;
+        let missing_cleared = missing_suit.map(|s| !ps.hand.has_suit(s)).unwrap_or(true);
+
+        if !missing_cleared {
+            // 阶段 A：缺门未清干净 → 只在缺门牌里挑 shanten 影响最小的打
+            let best_missing = discard_tiles.iter()
+                .filter(|&&t| missing_suit.map(|s| t.suit() == s).unwrap_or(false))
+                .min_by_key(|&&t| {
+                    let mut h = ps.hand.copy();
+                    h.remove_tile(t);
+                    let delta = h.shanten() - base_shanten;
+                    (delta, t.to_index())
+                });
+            if let Some(&tile) = best_missing {
                 return Action::discard(tile, self.current_turn);
             }
         }
-        Action::pass(self.current_turn)
+
+        // 阶段 B（或缺门已清）：shanten 最小化弃牌
+        let best_tile = discard_tiles.into_iter()
+            .min_by_key(|&t| {
+                let mut h = ps.hand.copy();
+                h.remove_tile(t);
+                let delta = h.shanten() - base_shanten;
+                (delta, t.to_index())
+            })
+            .unwrap();
+
+        Action::discard(best_tile, self.current_turn)
     }
 
     pub fn get_game_result(&self) -> Option<GameResult> {
@@ -712,10 +768,7 @@ impl Game {
 
         // 2. 杠上花检测
         if self.board.kan_shang_active {
-            let can_win_kanshang = WinChecker::can_win(
-                &self.board.players[current_player].hand,
-                crate::algo::winning::WinType::KanShang,
-            );
+            let can_win_kanshang = self.can_win_tsumo(current_player);
             if can_win_kanshang {
                 let payers = self.unwon_players_excluding(Some(current_player));
                 self.settle_win(current_player, crate::algo::winning::WinType::KanShang, self.base_score, &payers);
@@ -727,11 +780,7 @@ impl Game {
         }
 
         // 3. 自摸检测
-        let can_tsumo = WinChecker::can_win(
-            &self.board.players[current_player].hand,
-            crate::algo::winning::WinType::Tsumo,
-        );
-        if can_tsumo {
+        if self.can_win_tsumo(current_player) {
             let payers = self.unwon_players_excluding(Some(current_player));
             self.settle_win(current_player, crate::algo::winning::WinType::Tsumo, self.base_score, &payers);
             self.check_and_finalize();
@@ -774,14 +823,8 @@ impl Game {
             }
         }
 
-        let can_tsumo = WinChecker::can_win(
-            &self.board.players[player_id].hand,
-            crate::algo::winning::WinType::Tsumo,
-        );
-        let can_kan_shang = self.board.kan_shang_active && WinChecker::can_win(
-            &self.board.players[player_id].hand,
-            crate::algo::winning::WinType::KanShang,
-        );
+        let can_tsumo = self.can_win_tsumo(player_id);
+        let can_kan_shang = self.board.kan_shang_active && self.can_win_tsumo(player_id);
 
         LegalActions {
             discard: discard_tiles,
@@ -896,8 +939,8 @@ impl Game {
                 && !self.board.players[player_id].has_won
             {
                 if let Some(tile) = Tile::from_index(passive_tile_idx) {
+                    let can_win = self.can_win_ron(player_id, tile);
                     let ps = &self.board.players[player_id];
-                    let can_win = WinChecker::can_win(&ps.hand, crate::algo::winning::WinType::Ron);
                     let can_kong = ps.can_kong(tile);
                     let can_pong = ps.can_pong(tile);
                     (can_win, can_kong, can_pong)
@@ -1028,7 +1071,7 @@ impl Game {
             }
         };
         let ps = &self.board.players[player_id];
-        let can_win = WinChecker::can_win(&ps.hand, crate::algo::winning::WinType::Ron);
+        let can_win = self.can_win_ron(player_id, tile);
         let can_kong = ps.can_kong(tile);
         let can_pong = ps.can_pong(tile);
         Python::with_gil(|py| {

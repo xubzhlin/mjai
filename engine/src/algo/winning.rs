@@ -1,4 +1,4 @@
-﻿//! 胡牌判定核心算法（通用层，不随规则变化）
+//! 胡牌判定核心算法（通用层，不随规则变化）
 //!
 //! 标准胡牌 = 4×面子(3张顺子或刻子) + 1×雀头(2张对子)
 //! 七对 = 7×对子
@@ -49,12 +49,21 @@ pub struct WinChecker;
 impl WinChecker {
     /// 完整胡牌检查（标准胡+七对+龙七对），返回最佳 WinResult
     pub fn check_win(hand: &Hand, win_type: WinType) -> WinResult {
-        // 七对检查
-        if let Some(result) = Self::check_seven_pairs(hand, win_type) {
-            return result;
+        Self::check_win_with_melds(hand, win_type, 0)
+    }
+
+    /// 带副露面子数的胡牌检查
+    /// existing_melds: 玩家已有的副露面子数（Pong/Kong 都算 1）
+    pub fn check_win_with_melds(hand: &Hand, win_type: WinType, existing_melds: usize) -> WinResult {
+        // 七对检查（只能是全手牌，有副露时跳过）
+        if existing_melds == 0 {
+            if let Some(result) = Self::check_seven_pairs(hand, win_type) {
+                return result;
+            }
         }
         // 标准胡检查
-        if let Some(result) = Self::check_standard_win(hand, win_type) {
+        let need_melds = 4usize.saturating_sub(existing_melds);
+        if let Some(result) = Self::check_standard_win_with_melds(hand, win_type, need_melds) {
             return result;
         }
         WinResult::not_win()
@@ -62,21 +71,32 @@ impl WinChecker {
 
     /// 简化胡牌检查（只返回 can_win: bool）
     pub fn can_win(hand: &Hand, win_type: WinType) -> bool {
-        Self::check_win(hand, win_type).can_win
+        Self::check_win_with_melds(hand, win_type, 0).can_win
     }
 
-    /// 标准胡牌检查（4面子+1雀头）
+    pub fn can_win_with_melds(hand: &Hand, win_type: WinType, existing_melds: usize) -> bool {
+        Self::check_win_with_melds(hand, win_type, existing_melds).can_win
+    }
+
+    /// 标准胡牌检查（need_melds 面子 + 1雀头）
     fn check_standard_win(hand: &Hand, win_type: WinType) -> Option<WinResult> {
+        Self::check_standard_win_with_melds(hand, win_type, 4)
+    }
+
+    fn check_standard_win_with_melds(hand: &Hand, win_type: WinType, need_melds: usize) -> Option<WinResult> {
         let counts = hand.tiles;
+        let need_cards = need_melds * 3 + 2; // 面子×3 + 雀头×2
+        let total: u32 = counts.iter().map(|&c| c as u32).sum();
+        if total < need_cards as u32 { return None; }
 
         // 尝试每一组可能的雀头位置
         for i in 0..27 {
             if counts[i] >= 2 {
                 let mut remaining = counts;
                 remaining[i] -= 2;
-                if Self::can_form_all_melds(&remaining) {
+                if Self::can_form_n_melds(&remaining, need_melds) {
                     // 检查是否对对胡（没有顺子）
-                    let method = if Self::can_form_all_triplets(&remaining) {
+                    let method = if Self::can_form_all_triplets(&remaining, need_melds) {
                         WinMethod::AllTriplets
                     } else {
                         WinMethod::Standard
@@ -134,6 +154,45 @@ impl WinChecker {
         Self::try_melds(&mut counts)
     }
 
+    /// 从 counts 中恰好组成 n 个面子（不要求用完所有牌）
+    fn can_form_n_melds(counts: &[u8; 27], n: usize) -> bool {
+        if n == 0 { return true; }
+        let mut counts = *counts;
+        Self::try_n_melds(&mut counts, n)
+    }
+
+    fn try_n_melds(counts: &mut [u8; 27], n: usize) -> bool {
+        if n == 0 { return true; }
+        let start = match counts.iter().position(|&c| c > 0) {
+            Some(p) => p,
+            None => return false, // 没牌了但还需要面子
+        };
+
+        // 刻子
+        if counts[start] >= 3 {
+            counts[start] -= 3;
+            if Self::try_n_melds(counts, n - 1) { counts[start] += 3; return true; }
+            counts[start] += 3;
+        }
+
+        // 顺子
+        let suit_start = (start / 9) * 9;
+        let next = start + 1;
+        let next_next = start + 2;
+        if next_next < suit_start + 9 && counts[next] > 0 && counts[next_next] > 0 {
+            counts[start] -= 1;
+            counts[next] -= 1;
+            counts[next_next] -= 1;
+            if Self::try_n_melds(counts, n - 1) {
+                counts[start] += 1; counts[next] += 1; counts[next_next] += 1;
+                return true;
+            }
+            counts[start] += 1; counts[next] += 1; counts[next_next] += 1;
+        }
+
+        false
+    }
+
     fn try_melds(counts: &mut [u8; 27]) -> bool {
         // 找到第一个还有牌的位置
         let start = match counts.iter().position(|&c| c > 0) {
@@ -165,8 +224,8 @@ impl WinChecker {
     }
 
     /// 检查是否能组成 4 组刻子（对对胡）
-    fn can_form_all_triplets(counts: &[u8; 27]) -> bool {
-        let mut remaining = 4u32;
+    fn can_form_all_triplets(counts: &[u8; 27], need: usize) -> bool {
+        let mut remaining = need as u32;
         for &c in counts.iter() {
             remaining -= (c / 3) as u32;
         }

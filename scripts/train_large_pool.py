@@ -16,7 +16,7 @@
   启动时 glob **/iter_*.pt 找最新 checkpoint + 扫描磁盘最大 game_id，
   两者独立判断——不管 checkpoint 有没有丢，牌谱编号都不重名覆盖。
 """
-import os, sys, time, glob, torch, numpy as np
+import os, sys, time, glob, torch, numpy as np, argparse
 sys.path.insert(0, ".")
 os.environ["OMP_NUM_THREADS"] = "1"
 
@@ -25,21 +25,35 @@ from mjai.trainer import Trainer, TrainerConfig
 from mjai.engine import Engine
 from mjai.selfplay import play_one_game
 from mjai.opponent_pool import OpponentPool, OpponentPoolConfig
+from mjai.bots import HeuristicBot
+from mjai.bots.adapter import BotEngineAdapter
+
+# ========== 命令行参数 ==========
+_parser = argparse.ArgumentParser(description="Self-play RL training for Sichuan Mahjong")
+_parser.add_argument("--fresh", action="store_true",
+                     help="跳过 checkpoint 恢复，从头开始（旧牌谱 game_id 仍保留，不覆盖）")
+_parser.add_argument("--out", type=str, default="checkpoints_opppool5000",
+                     help="输出根目录（默认: checkpoints_opppool5000）")
+_parser.add_argument("--resume-from", type=str, default=None,
+                     help="精确指定要恢复的 checkpoint 路径（如 checkpoints_opppool5000/iter_0080/iter_0080.pt）")
+_args = _parser.parse_args()
 
 # ========== 输出根目录（一切产物都在这里） ==========
-OUT = "checkpoints_opppool5000"
+OUT = _args.out
 os.makedirs(OUT, exist_ok=True)
 
 # ========== 关键配置 ==========
 OPPONENT_MIX_PROB = 0.5     # 50% pool 对手 / 50% 自身 (让池真的被用到)
 POOL_SIZE = 8
 ADMISSION_WR = 0.20
+POOL_ENABLE_AFTER_ITER = 200  # iter 200 之前对手只用 HeuristicBot (先学好策略)
 TOTAL_ITER = 500
-GAMES_PER_ITER = 10
-N_UPDATE = 20
-MAX_STEPS = 5000
-SNAPSHOT_INTERVAL = 50
-CHECKPOINT_INTERVAL = 5     # 每 5 iter 存一次 checkpoint
+GAMES_PER_ITER = 40
+N_UPDATE = 80
+MAX_STEPS = 200000
+SNAPSHOT_INTERVAL = 100
+CHECKPOINT_INTERVAL = 40
+ADMISSION_EVAL_GAMES = 60   # 准入评估: 每个对手打多少局 (总时间 ~2min per snapshot)
 
 # ========== 构建组件 ==========
 model_cfg = ModelConfig(input_channels=71, feature_dim=1024)
@@ -52,12 +66,51 @@ model = ResNetDQN(model_cfg)
 cfg = TrainerConfig(
     num_games_per_iter=GAMES_PER_ITER,
     epsilon_start=0.5, epsilon_end=0.05,
-    epsilon_decay_steps=800, learning_rate=1e-4, gamma=0.99,
+    epsilon_decay_steps=20000, learning_rate=1e-4, gamma=0.99,
     batch_size=128, warmup_games=30, device="cpu", log_freq=50,
     target_update_freq=200, checkpoint_freq=CHECKPOINT_INTERVAL, buffer_capacity=100000,
 )
 
 trainer = Trainer(model, cfg, model_cfg)
+
+# ========== 常驻启发式对手（替代原 None 随机 fallback） ==========
+HEURISTIC_OPPONENT = BotEngineAdapter(HeuristicBot(seed=42))
+
+# ========== 真实对局准入评估器 ==========
+def _make_admission_evaluator():
+    """返回 (candidate_model, [(model_id, model), ...], n_games) -> Dict[model_id, win_rate]"""
+    from mjai.engine import Engine
+    from mjai.selfplay import play_one_game
+
+    def evaluator(candidate_model, existing_pairs, n_games):
+        """
+        Args:
+            candidate_model: 待准入的模型
+            existing_pairs:  [(model_id, model), ...] 池内已有快照
+            n_games:         每个对手的对局数上限
+        
+        Returns:
+            {model_id: win_rate}  胜率 > 0 表示 candidate 对该对手的正分率
+        """
+        results = {}
+        n_per = max(3, n_games // max(1, len(existing_pairs)))
+        cand_eng = Engine(candidate_model, device="cpu")
+
+        for model_id, existing_model in existing_pairs:
+            wins = 0
+            for g in range(n_per):
+                opp_eng = Engine(existing_model, device="cpu")
+                engines = {0: cand_eng, 1: opp_eng, 2: HEURISTIC_OPPONENT, 3: HEURISTIC_OPPONENT}
+                r = play_one_game(engine=engines, epsilon=0.0, max_turns=300)
+                if r.is_over and r.final_scores[0] > 0:
+                    wins += 1
+            wr = wins / n_per
+            results[model_id] = wr
+            print(f"    vs {model_id}: {wins}/{n_per} = {wr:.2%}")
+
+        return results
+
+    return evaluator
 
 pool_cfg = OpponentPoolConfig(
     max_size=POOL_SIZE,
@@ -65,6 +118,8 @@ pool_cfg = OpponentPoolConfig(
     retire_win_rate=0.05,
     snapshot_interval=SNAPSHOT_INTERVAL,
     sample_strategy="uniform",
+    eval_games=ADMISSION_EVAL_GAMES,
+    admission_evaluator=_make_admission_evaluator(),
 )
 pool = OpponentPool(pool_cfg)
 
@@ -82,28 +137,35 @@ def _warmup_dir() -> str:
 
 # ========== 工具: 找最新 checkpoint / 最大 game_id ==========
 def _find_latest_checkpoint(out_dir: str) -> str | None:
-    """递归找 **/iter_*.pt，返回最新的那个。
+    """递归找 **/iter_*.pt，返回最新且未损坏的那个。
 
     规则:
-      - 正式 checkpoint (iter_0005.pt) 按 iter 号比大小
-      - iter_interrupt.pt 永远比正式 checkpoint 新（按 mtime）
-      - 其他匹配不上的返回 None
+      - iter_interrupt.pt 优先（按 mtime），但 torch.load 失败就跳过
+      - 正式 checkpoint 按 iter 号比大小，同样跳过损坏的
     """
     files = glob.glob(os.path.join(out_dir, "**", "iter_*.pt"), recursive=True)
     if not files:
         return None
 
     def _key(path: str):
-        base = os.path.basename(path)              # iter_0005.pt 或 iter_interrupt.pt
+        base = os.path.basename(path)
         stem = base.replace("iter_", "").replace(".pt", "")
         if stem == "interrupt":
-            return (1, os.path.getmtime(path))     # interrupt 永远排最后
+            return (1, os.path.getmtime(path))
         try:
-            return (0, int(stem))                  # 正式 checkpoint 按 iter 号
+            return (0, int(stem))
         except ValueError:
             return (-1, 0)
 
-    return max(files, key=_key)
+    # 按优先级排序，跳过损坏的，返回第一个能加载的
+    for path in sorted(files, key=_key, reverse=True):
+        try:
+            torch.load(path, weights_only=False)
+            return path
+        except Exception:
+            print(f"  [WARN] 跳过损坏 checkpoint: {path}")
+            continue
+    return None
 
 
 def _find_max_game_id(out_dir: str) -> int:
@@ -121,9 +183,28 @@ def _find_max_game_id(out_dir: str) -> int:
     return max_id
 
 
-resume_from = _find_latest_checkpoint(OUT)
+# ========== 恢复控制 ==========
+if _args.fresh:
+    resume_from = None
+    _game_counter = 0
+elif _args.resume_from:
+    # 精确指定（最高优先级）
+    resume_from = _args.resume_from
+    if not os.path.isfile(resume_from):
+        print(f"❌ --resume-from 指定的文件不存在: {resume_from}")
+        sys.exit(1)
+    # 验证能加载
+    try:
+        torch.load(resume_from, weights_only=False)
+    except Exception as e:
+        print(f"❌ --resume-from 指定的 checkpoint 损坏: {e}")
+        sys.exit(1)
+    _game_counter = _find_max_game_id(OUT)
+else:
+    resume_from = _find_latest_checkpoint(OUT)
+    _game_counter = _find_max_game_id(OUT)
+
 start_iter = 1
-_game_counter = _find_max_game_id(OUT)   # ← 从磁盘实况扫，最靠谱
 
 if resume_from:
     print("=" * 60)
@@ -151,11 +232,15 @@ if resume_from:
     print("=" * 60)
 else:
     print("=" * 60)
-    print("🆕 Fresh start — 无 checkpoint 可恢复")
+    if _args.fresh:
+        print("🧹 --fresh 模式: 跳过 checkpoint 恢复 + 牌谱计数清零")
+    else:
+        print("🆕 Fresh start — 无 checkpoint 可恢复")
     print(f"  目标: {MAX_STEPS} DQN steps, {TOTAL_ITER} iters")
     print(f"  Pool: max={pool_cfg.max_size}, admission={pool_cfg.admission_win_rate:.0%}")
     print(f"  Opponent mix prob: {OPPONENT_MIX_PROB:.0%}")
-    print(f"  已落盘 game_counter={_game_counter} (防止重名覆盖)")
+    print(f"  HeuristicBot 已接入 (替代原 None 随机 fallback)")
+    print(f"  已落盘 game_counter={_game_counter}")
     print("=" * 60)
 
 # ========== Warmup（仅 fresh start） ==========
@@ -178,27 +263,65 @@ if start_iter == 1:
 # ========== 自博弈循环 ==========
 engine = Engine(trainer.model, device="cpu")
 
-def _make_engines_dict(current_model_engine):
+def _make_engines_dict(current_model_engine, iteration: int = 0):
     d = {0: current_model_engine}
     if OPPONENT_MIX_PROB == 0.0:
         for pid in range(1, 4):
             d[pid] = current_model_engine
         return d
-    if pool.is_empty() or np.random.random() >= OPPONENT_MIX_PROB:
+    # POOL_ENABLE_AFTER_ITER 之前 + 池空 + 没抽到 mix → HeuristicBot
+    pool_disabled = iteration < POOL_ENABLE_AFTER_ITER
+    if pool_disabled or pool.is_empty() or np.random.random() >= OPPONENT_MIX_PROB:
         for pid in range(1, 4):
-            d[pid] = None
+            d[pid] = HEURISTIC_OPPONENT
         return d
+    # 抽到 mix 概率 + POOL_ENABLE_AFTER_ITER 之后 → 从 pool 采样
     opponents = pool.sample(num_seats=3)
     for i, opp in enumerate(opponents):
         try:
             m = opp.model
-            d[i + 1] = Engine(m, device="cpu") if isinstance(m, torch.nn.Module) else None
+            if isinstance(m, torch.nn.Module):
+                d[i + 1] = Engine(m, device="cpu")
+            else:
+                d[i + 1] = HEURISTIC_OPPONENT
         except Exception:
-            d[i + 1] = None
+            d[i + 1] = HEURISTIC_OPPONENT
+    # 补齐空位
     for pid in range(1, 4):
         if pid not in d:
-            d[pid] = None
+            d[pid] = HEURISTIC_OPPONENT
     return d
+
+
+def _describe_engines(engines: dict) -> str:
+    """把 engines dict 翻译成可读的对手类型描述，方便确认 HeuristicBot 是否生效"""
+    types = []
+    for pid in range(4):
+        eng = engines.get(pid)
+        if eng is None:
+            types.append("随机")
+        elif isinstance(eng, BotEngineAdapter):
+            types.append("HeuristicBot")
+        elif isinstance(eng, Engine):
+            m = eng.model
+            # 识别是当前训练模型还是 pool 里的旧快照
+            if m is trainer.model:
+                types.append("当前模型")
+            else:
+                types.append(f"旧快照({type(m).__name__})")
+        else:
+            types.append(f"?({type(eng).__name__})")
+    # 压缩相邻重复: "HeuristicBot, HeuristicBot, HeuristicBot, 当前模型" → "3×HeuristicBot + 当前模型"
+    compressed = []
+    for t in types:
+        if compressed and compressed[-1][0] == t:
+            compressed[-1][1] += 1
+        else:
+            compressed.append([t, 1])
+    parts = []
+    for t, cnt in compressed:
+        parts.append(f"{cnt}×{t}" if cnt > 1 else t)
+    return ", ".join(parts)
 
 
 t0 = time.time()
@@ -219,7 +342,13 @@ def _save_checkpoint(path: str, iteration: int):
 
 try:
     for iteration in range(start_iter, TOTAL_ITER + 1):
-        engines = _make_engines_dict(engine)
+        engines = _make_engines_dict(engine, iteration)
+
+        # 每轮开头打印对手组合（首次 / 每 10 轮 / pool 状态变化时）
+        if iteration == start_iter or iteration % 10 == 0:
+            opp_desc = _describe_engines(engines)
+            pool_status = "POOL_OFF" if iteration < POOL_ENABLE_AFTER_ITER else f"POOL_ON({len(pool)}/{POOL_SIZE})"
+            print(f"  iter {iteration}: [{pool_status}] opponents = {opp_desc}")
 
         # 2. Self-play — 牌谱落盘到 iter_XXXX/
         iter_dir = _iter_dir(iteration)
@@ -247,8 +376,8 @@ try:
         # 5. Epsilon decay
         trainer._decay_epsilon()
 
-        # 6. 定期 snapshot 入池
-        if iteration % SNAPSHOT_INTERVAL == 0:
+        # 6. 定期 snapshot 入池（POOL_ENABLE_AFTER_ITER 之后才开始存快照）
+        if iteration >= POOL_ENABLE_AFTER_ITER and iteration % SNAPSHOT_INTERVAL == 0:
             try:
                 pool.add_snapshot(
                     trainer.model,
